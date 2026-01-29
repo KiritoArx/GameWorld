@@ -1,0 +1,516 @@
+/* ===========================================
+   CODED WORLD - Retro Terminal Aesthetic
+   =========================================== */
+
+:root {
+    /* Terminal greens & ambers */
+    --bg-dark: #0a0e0d;
+    --bg-panel: #0d1210;
+    --bg-panel-hover: #131a17;
+    --terminal-green: #00ff88;
+    --terminal-green-dim: #00aa5c;
+    --terminal-amber: #ffaa00;
+    --terminal-cyan: #00d4ff;
+    --terminal-red: #ff4466;
+    --terminal-pink: #ff66aa;
+    --text-primary: #c8e6c8;
+    --text-dim: #5a7a5a;
+    --border-color: #1a2a22;
+    --border-glow: rgba(0, 255, 136, 0.3);
+    
+    /* Spacing */
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    
+    /* Fonts */
+    --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+    --font-display: 'Space Grotesk', sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background: var(--bg-dark);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: hidden;
+    height: 100vh;
+}
+
+#app {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    grid-template-rows: 1fr auto;
+    height: 100vh;
+    gap: 0;
+}
+
+/* ===========================================
+   VIEWPORT & CANVAS
+   =========================================== */
+
+#viewport {
+    position: relative;
+    background: #050807;
+    overflow: hidden;
+    border-right: 1px solid var(--border-color);
+}
+
+#gameCanvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    cursor: crosshair;
+}
+
+#hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: linear-gradient(to bottom, rgba(10, 14, 13, 0.95), transparent);
+    pointer-events: none;
+}
+
+#stats-bar {
+    display: flex;
+    gap: var(--spacing-lg);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+#stats-bar span {
+    color: var(--terminal-green-dim);
+}
+
+#stats-bar span::before {
+    content: '▸ ';
+    color: var(--terminal-green);
+}
+
+/* ===========================================
+   CONTROL PANEL
+   =========================================== */
+
+#controls {
+    background: var(--bg-panel);
+    padding: var(--spacing-md);
+    border-left: 1px solid var(--border-color);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+#controls h2 {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--terminal-green);
+    letter-spacing: 0.15em;
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--border-color);
+    text-shadow: 0 0 20px var(--terminal-green);
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.control-group label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+}
+
+.control-group input[type="number"] {
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    color: var(--terminal-amber);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    padding: var(--spacing-sm);
+    border-radius: 2px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.control-group input[type="number"]:focus {
+    border-color: var(--terminal-green);
+    box-shadow: 0 0 10px var(--border-glow);
+}
+
+.control-group .hint {
+    font-size: 10px;
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+button {
+    background: var(--bg-dark);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: var(--spacing-sm) var(--spacing-md);
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.15s;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+button:hover {
+    background: var(--bg-panel-hover);
+    border-color: var(--terminal-green-dim);
+    color: var(--terminal-green);
+}
+
+button:active {
+    transform: scale(0.98);
+}
+
+button.primary-btn {
+    background: linear-gradient(to bottom, #1a3a2a, #0d1f15);
+    border-color: var(--terminal-green-dim);
+    color: var(--terminal-green);
+}
+
+button.primary-btn:hover {
+    background: linear-gradient(to bottom, #2a4a3a, #1a2f25);
+    box-shadow: 0 0 15px var(--border-glow);
+}
+
+button.danger-btn {
+    border-color: var(--terminal-red);
+    color: var(--terminal-red);
+}
+
+button.danger-btn:hover {
+    background: rgba(255, 68, 102, 0.1);
+}
+
+.speed-buttons, .pop-buttons {
+    display: flex;
+    gap: var(--spacing-xs);
+}
+
+.speed-btn {
+    flex: 1;
+    font-size: 10px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.speed-btn.active {
+    background: var(--terminal-green);
+    color: var(--bg-dark);
+    border-color: var(--terminal-green);
+}
+
+hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: var(--spacing-sm) 0;
+}
+
+/* ===========================================
+   INSPECTOR PANEL (Grand Debugger)
+   =========================================== */
+
+#inspector {
+    position: fixed;
+    bottom: var(--spacing-md);
+    left: var(--spacing-md);
+    width: 380px;
+    max-height: 70vh;
+    background: var(--bg-panel);
+    border: 1px solid var(--terminal-cyan);
+    border-radius: 4px;
+    box-shadow: 
+        0 0 30px rgba(0, 212, 255, 0.2),
+        inset 0 0 60px rgba(0, 212, 255, 0.03);
+    overflow: hidden;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+}
+
+#inspector.hidden {
+    display: none;
+}
+
+.inspector-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: linear-gradient(to right, rgba(0, 212, 255, 0.15), transparent);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.inspector-header h3 {
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--terminal-cyan);
+    letter-spacing: 0.15em;
+}
+
+.inspector-header button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    padding: 2px 6px;
+    line-height: 1;
+}
+
+.inspector-header button:hover {
+    color: var(--terminal-red);
+    background: none;
+}
+
+#inspector-content {
+    padding: var(--spacing-md);
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Inspector sections */
+.inspector-section {
+    margin-bottom: var(--spacing-md);
+}
+
+.inspector-section:last-child {
+    margin-bottom: 0;
+}
+
+.inspector-section h4 {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--terminal-amber);
+    margin-bottom: var(--spacing-xs);
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 1px dashed var(--border-color);
+}
+
+.npc-id {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--terminal-pink);
+    margin-bottom: var(--spacing-sm);
+}
+
+.npc-action {
+    background: rgba(0, 255, 136, 0.1);
+    border-left: 3px solid var(--terminal-green);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+    font-size: 12px;
+}
+
+.npc-action strong {
+    color: var(--terminal-green);
+}
+
+/* Stat bars */
+.stat-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+
+.stat-label {
+    width: 80px;
+    color: var(--text-dim);
+}
+
+.stat-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--bg-dark);
+    border-radius: 1px;
+    overflow: hidden;
+    position: relative;
+}
+
+.stat-bar-fill {
+    height: 100%;
+    transition: width 0.3s;
+}
+
+.stat-bar-fill.need {
+    background: linear-gradient(to right, var(--terminal-red), var(--terminal-amber), var(--terminal-green));
+}
+
+.stat-bar-fill.trait {
+    background: var(--terminal-cyan);
+}
+
+.stat-value {
+    width: 35px;
+    text-align: right;
+    color: var(--terminal-amber);
+    font-size: 10px;
+}
+
+/* WHY breakdown table */
+.why-table {
+    width: 100%;
+    font-size: 10px;
+    border-collapse: collapse;
+}
+
+.why-table th {
+    text-align: left;
+    color: var(--text-dim);
+    font-weight: normal;
+    padding: 3px 6px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.why-table td {
+    padding: 3px 6px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.why-table tr.chosen {
+    background: rgba(0, 255, 136, 0.15);
+}
+
+.why-table tr.chosen td {
+    color: var(--terminal-green);
+}
+
+.why-table .score {
+    text-align: right;
+    font-weight: 500;
+}
+
+.why-table .score.high {
+    color: var(--terminal-green);
+}
+
+.why-table .score.mid {
+    color: var(--terminal-amber);
+}
+
+.why-table .score.low {
+    color: var(--text-dim);
+}
+
+/* Relationships list */
+.relationship-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px dotted var(--border-color);
+    font-size: 11px;
+}
+
+.relationship-item:last-child {
+    border-bottom: none;
+}
+
+.rel-target {
+    color: var(--terminal-pink);
+}
+
+.rel-stats {
+    display: flex;
+    gap: var(--spacing-sm);
+    font-size: 10px;
+}
+
+.rel-stat {
+    color: var(--text-dim);
+}
+
+.rel-stat span {
+    color: var(--terminal-cyan);
+}
+
+/* Inventory display */
+.inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+}
+
+.inventory-item {
+    display: flex;
+    justify-content: space-between;
+    background: var(--bg-dark);
+    padding: 4px 8px;
+    border-radius: 2px;
+    font-size: 11px;
+}
+
+.inventory-item .name {
+    color: var(--text-dim);
+}
+
+.inventory-item .count {
+    color: var(--terminal-amber);
+}
+
+/* ===========================================
+   SCROLLBAR
+   =========================================== */
+
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--terminal-green-dim);
+}
+
+/* ===========================================
+   ANIMATIONS
+   =========================================== */
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.paused-indicator {
+    animation: pulse 1s ease-in-out infinite;
+    color: var(--terminal-amber) !important;
+}
+
+/* Selection highlight on canvas */
+.selection-ring {
+    stroke: var(--terminal-cyan);
+    stroke-width: 2;
+    fill: none;
+    animation: pulse 0.8s ease-in-out infinite;
+}

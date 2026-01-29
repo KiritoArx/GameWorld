@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coded World - Emergent God-Sim</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Main game canvas -->
+        <div id="viewport">
+            <canvas id="gameCanvas"></canvas>
+            <div id="hud">
+                <div id="stats-bar">
+                    <span id="stat-tick">Tick: 0</span>
+                    <span id="stat-pop">Pop: 0</span>
+                    <span id="stat-stockpile">Stockpile: 0</span>
+                    <span id="stat-relationships">Relations: 0</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Control panel -->
+        <div id="controls">
+            <h2>⚡ SIMULATION</h2>
+            <div class="control-group">
+                <label>Seed</label>
+                <input type="number" id="seed-input" value="42">
+                <button id="btn-apply-seed">Apply & Reset</button>
+            </div>
+            <div class="control-group">
+                <label>Speed</label>
+                <div class="speed-buttons">
+                    <button class="speed-btn active" data-speed="1">1×</button>
+                    <button class="speed-btn" data-speed="2">2×</button>
+                    <button class="speed-btn" data-speed="5">5×</button>
+                    <button class="speed-btn" data-speed="20">20×</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <button id="btn-pause" class="primary-btn">⏸ Pause</button>
+            </div>
+            <div class="control-group">
+                <label>Population</label>
+                <div class="pop-buttons">
+                    <button id="btn-add-npc">+50 NPC</button>
+                    <button id="btn-remove-npc">−50 NPC</button>
+                </div>
+                <span class="hint">Cap: 500</span>
+            </div>
+            <div class="control-group">
+                <label>Initial NPCs</label>
+                <input type="number" id="initial-npc-input" value="150" min="10" max="500">
+            </div>
+            <hr>
+            <div class="control-group">
+                <button id="btn-reset" class="danger-btn">↻ Reset World</button>
+            </div>
+        </div>
+        
+        <!-- Grand Debugger Inspector -->
+        <div id="inspector" class="hidden">
+            <div class="inspector-header">
+                <h3>🔍 GRAND DEBUGGER</h3>
+                <button id="btn-close-inspector">✕</button>
+            </div>
+            <div id="inspector-content">
+                <p class="hint">Click an NPC to inspect</p>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
