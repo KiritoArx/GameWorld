@@ -12,6 +12,7 @@
 Thumbs.db
 *.tmp
 *.log
+Theoutputcontent.txt
 .env
 .env.*
 *.key

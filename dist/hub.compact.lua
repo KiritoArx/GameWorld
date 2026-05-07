@@ -572,16 +572,35 @@ local floatingPreviewConn = nil
 local psychicSpyEnabled = false
 local psychicSpyStartedAt = 0
 local psychicSpyLog = {}
+local PSYCHIC_TOOL_ALIASES = {
+["Remote Arsenal"] = {"Remote Arsenal", "Ztool", "ZTool", "ztool"},
+["Psychic Editor"] = {"Psychic Editor", "Zpsychiceditor", "ZPsychicEditor", "ZPsychic Editor", "zpsychiceditor"},
+}
 local function getBackpack()
 return player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 5)
 end
+local function getPsychicAliases(name)
+return PSYCHIC_TOOL_ALIASES[name] or { name }
+end
+local function isPsychicToolName(name, canonical)
+for _, alias in ipairs(getPsychicAliases(canonical)) do
+if name == alias then return true end
+end
+return false
+end
 local function findToolIn(container, name)
 if not container then return nil end
-local direct = container:FindFirstChild(name)
+for _, alias in ipairs(getPsychicAliases(name)) do
+local direct = container:FindFirstChild(alias)
 if direct and direct:IsA("Tool") then return direct end
+end
 for _, inst in ipairs(container:GetDescendants()) do
-if inst:IsA("Tool") and inst.Name == name then
+if inst:IsA("Tool") then
+for _, alias in ipairs(getPsychicAliases(name)) do
+if inst.Name == alias then
 return inst
+end
+end
 end
 end
 end
@@ -613,6 +632,10 @@ end
 local clone = tool:Clone()
 clone.Parent = backpack
 return clone, "cloned from " .. tostring(source)
+end
+local function findOwnedPsychicTool(name)
+local backpack = getBackpack()
+return findToolIn(player.Character, name) or findToolIn(backpack, name)
 end
 local function getArsenalMax(arsenal)
 local stats = arsenal and arsenal:FindFirstChild("Stats")
@@ -697,6 +720,10 @@ end
 end
 scanTools(backpack, "Backpack")
 scanTools(char, "Character")
+local arsenalAlias = findOwnedPsychicTool("Remote Arsenal")
+local editorAlias = findOwnedPsychicTool("Psychic Editor")
+spyLine(lines, "Remote Arsenal alias match: " .. (arsenalAlias and spyFullName(arsenalAlias) or "missing"))
+spyLine(lines, "Psychic Editor alias match: " .. (editorAlias and spyFullName(editorAlias) or "missing"))
 spyLine(lines, "Last bind request slots: " .. tostring(psychicLastBindRequest))
 spyLine(lines, "Arsenal state slots: " .. tostring(type(arsenalState) == "table" and #arsenalState or "not synced"))
 return lines
@@ -742,7 +769,7 @@ for _, tool in ipairs(container:GetChildren()) do
 local stats = tool:FindFirstChild("Stats")
 if tool:IsA("Tool")
 and not seen[tool]
-and tool.Name ~= "Remote Arsenal"
+and not isPsychicToolName(tool.Name, "Remote Arsenal")
 and tool:GetAttribute("ToolType") == "Gun"
 and stats
 and not stats:GetAttribute("Projectile")
@@ -767,12 +794,8 @@ end
 return guns
 end
 local function bindRemoteArsenal(limitOverride, allowDuplicates)
-local backpack = getBackpack()
-local arsenal = backpack and backpack:FindFirstChild("Remote Arsenal")
-if not arsenal and player.Character then
-arsenal = player.Character:FindFirstChild("Remote Arsenal")
-end
-if not arsenal then return false, "Remote Arsenal not in Backpack/Character" end
+local arsenal = findOwnedPsychicTool("Remote Arsenal")
+if not arsenal then return false, "Remote Arsenal/Ztool not in Backpack/Character" end
 local setWeapons = arsenal:FindFirstChild("SetWeaponsClient")
 if not (setWeapons and setWeapons:IsA("RemoteEvent")) then
 return false, "missing SetWeaponsClient"
@@ -788,8 +811,7 @@ setWeapons:FireServer(guns, true)
 return true, string.format("sent %d gun slot(s)%s", #guns, allowDuplicates and " with duplicates" or "")
 end
 local function equipPsychicTool(name)
-local backpack = getBackpack()
-local tool = (player.Character and player.Character:FindFirstChild(name)) or (backpack and backpack:FindFirstChild(name))
+local tool = findOwnedPsychicTool(name)
 local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 if tool and hum then
 hum:EquipTool(tool)
@@ -1043,9 +1065,8 @@ Player:AddButton({
 Name = "Psychic Diagnostic",
 Description = "Copy Psychic toolkit status",
 Callback = function()
-local backpack = getBackpack()
-local arsenal = (backpack and backpack:FindFirstChild("Remote Arsenal")) or (player.Character and player.Character:FindFirstChild("Remote Arsenal"))
-local editor = (backpack and backpack:FindFirstChild("Psychic Editor")) or (player.Character and player.Character:FindFirstChild("Psychic Editor"))
+local arsenal = findOwnedPsychicTool("Remote Arsenal")
+local editor = findOwnedPsychicTool("Psychic Editor")
 local setWeapons = arsenal and arsenal:FindFirstChild("SetWeaponsClient")
 local msg = string.format(
 "=== CRUMB HUB PSYCHIC DIAGNOSTIC ===\n" ..
@@ -1054,6 +1075,8 @@ local msg = string.format(
 "RemoteArsenalMax attr: %s\n" ..
 "Remote Arsenal: %s\n" ..
 "Psychic Editor: %s\n" ..
+"Remote Arsenal aliases: %s\n" ..
+"Psychic Editor aliases: %s\n" ..
 "SetWeaponsClient: %s\n" ..
 "Last bind request slots: %s\n" ..
 "Floating previews: %s\n" ..
@@ -1063,6 +1086,8 @@ tostring(player:GetAttribute("DragRange")),
 tostring(player:GetAttribute("RemoteArsenalMax")),
 arsenal and arsenal:GetFullName() or "missing",
 editor and editor:GetFullName() or "missing",
+table.concat(getPsychicAliases("Remote Arsenal"), ", "),
+table.concat(getPsychicAliases("Psychic Editor"), ", "),
 setWeapons and setWeapons:GetFullName() or "missing",
 tostring(psychicLastBindRequest),
 floatingPreviewEnabled and "on" or "off",
@@ -1313,7 +1338,7 @@ for _, tool in ipairs(char:GetChildren()) do
 if tool:IsA("Tool") and (
 tool:GetAttribute("ToolType") == "Gun"
 or tool:FindFirstChild("Shoot")
-or tool.Name == "Remote Arsenal"
+or isPsychicToolName(tool.Name, "Remote Arsenal")
 ) then
 return tool
 end
