@@ -670,6 +670,12 @@ local floatingPreviewConn = nil
 local psychicSpyEnabled = false
 local psychicSpyStartedAt = 0
 local psychicSpyLog = {}
+local psychicFunctionalArsenal = nil
+local psychicFunctionalEditor = nil
+local psychicShootRemote = nil
+local psychicSetWeaponsRemote = nil
+local psychicServerSlots = nil
+local watchPsychicArsenal
 local PSYCHIC_TOOL_ALIASES = {
     ["Remote Arsenal"] = {"Remote Arsenal", "Ztool", "ZTool", "ztool"},
     ["Psychic Editor"] = {"Psychic Editor", "Zpsychiceditor", "ZPsychicEditor", "ZPsychic Editor", "zpsychiceditor"},
@@ -708,10 +714,48 @@ local function findToolIn(container, name)
     end
 end
 
-local function findPsychicToolTemplate(name)
+local function findExactToolIn(container, name)
+    if not container then return nil end
+    local direct = container:FindFirstChild(name)
+    if direct and direct:IsA("Tool") then return direct end
+
+    for _, inst in ipairs(container:GetDescendants()) do
+        if inst:IsA("Tool") and inst.Name == name then
+            return inst
+        end
+    end
+end
+
+local function getPsychicMiscTemplate(name)
+    local items = ReplicatedStorage:FindFirstChild("Items") or ReplicatedStorage:WaitForChild("Items", 5)
+    local misc = items and (items:FindFirstChild("Misc") or items:WaitForChild("Misc", 5))
+    local tool = misc and misc:FindFirstChild(name)
+    if tool and tool:IsA("Tool") then
+        return tool, tool:GetFullName()
+    end
+end
+
+local function findFunctionalPsychicTool(name)
     local backpack = getBackpack()
-    local existing = findToolIn(player.Character, name) or findToolIn(backpack, name)
+    local cached = (name == "Remote Arsenal" and psychicFunctionalArsenal) or (name == "Psychic Editor" and psychicFunctionalEditor)
+    if cached and cached.Parent then return cached, "cached" end
+
+    for _, container in ipairs({ player.Character, backpack }) do
+        local tool = findExactToolIn(container, name)
+        if tool then
+            if name ~= "Remote Arsenal" or tool:FindFirstChild("SetWeaponsClient") then
+                return tool, "owned"
+            end
+        end
+    end
+end
+
+local function findPsychicToolTemplate(name)
+    local existing = findFunctionalPsychicTool(name)
     if existing then return existing, "owned" end
+
+    local miscTool, miscSource = getPsychicMiscTemplate(name)
+    if miscTool then return miscTool, miscSource end
 
     local roots = {
         ReplicatedStorage,
@@ -727,6 +771,31 @@ local function findPsychicToolTemplate(name)
     end
 end
 
+local function cachePsychicArsenal(arsenal)
+    if not arsenal then return false end
+
+    local stats = arsenal:FindFirstChild("Stats")
+    if stats then stats:SetAttribute("Max", math.max(stats:GetAttribute("Max") or 0, 16)) end
+
+    psychicFunctionalArsenal = arsenal
+    psychicShootRemote = arsenal:FindFirstChild("Shoot")
+    psychicSetWeaponsRemote = arsenal:FindFirstChild("SetWeaponsClient")
+    watchPsychicArsenal(arsenal)
+
+    if psychicSetWeaponsRemote and psychicSetWeaponsRemote:IsA("RemoteEvent") and not arsenal:GetAttribute("CRUMB_ServerSlotWatcher") then
+        arsenal:SetAttribute("CRUMB_ServerSlotWatcher", true)
+        psychicSetWeaponsRemote.OnClientEvent:Connect(function(state)
+            psychicServerSlots = state
+            arsenalState = state
+            psychicLastStatus = "server arsenal synced: " .. tostring(type(state) == "table" and #state or state)
+            print("[CRUMB HUB] " .. psychicLastStatus)
+        end)
+    end
+
+    return psychicShootRemote and psychicShootRemote:IsA("RemoteEvent")
+        and psychicSetWeaponsRemote and psychicSetWeaponsRemote:IsA("RemoteEvent")
+end
+
 local function getOrClonePsychicTool(name)
     local backpack = getBackpack()
     local tool, source = findPsychicToolTemplate(name)
@@ -735,11 +804,19 @@ local function getOrClonePsychicTool(name)
     end
 
     if tool.Parent == backpack or tool.Parent == player.Character then
+        if name == "Remote Arsenal" then cachePsychicArsenal(tool) end
+        if name == "Psychic Editor" then psychicFunctionalEditor = tool end
         return tool, "owned"
     end
 
     local clone = tool:Clone()
+    if name == "Remote Arsenal" then
+        local stats = clone:FindFirstChild("Stats")
+        if stats then stats:SetAttribute("Max", math.max(stats:GetAttribute("Max") or 0, 16)) end
+    end
     clone.Parent = backpack
+    if name == "Remote Arsenal" then cachePsychicArsenal(clone) end
+    if name == "Psychic Editor" then psychicFunctionalEditor = clone end
     return clone, "cloned from " .. tostring(source)
 end
 
@@ -756,13 +833,14 @@ local function getArsenalMax(arsenal)
     return math.max(1, max)
 end
 
-local function watchPsychicArsenal(arsenal)
+function watchPsychicArsenal(arsenal)
     if not arsenal or watchedPsychicArsenals[arsenal] then return end
     local setWeapons = arsenal:FindFirstChild("SetWeaponsClient")
     if setWeapons and setWeapons:IsA("RemoteEvent") then
         watchedPsychicArsenals[arsenal] = true
         setWeapons.OnClientEvent:Connect(function(state)
             arsenalState = state
+            psychicServerSlots = state
             print("[CRUMB HUB] Psychic arsenal synced:", type(state) == "table" and #state or tostring(state))
         end)
     end
@@ -1008,14 +1086,17 @@ local function getBindableArsenalGuns(limit, allowDuplicates)
 end
 
 local function bindRemoteArsenal(limitOverride, allowDuplicates)
-    local arsenal = findOwnedPsychicTool("Remote Arsenal")
-    if not arsenal then return false, "Remote Arsenal/Ztool not in Backpack/Character" end
+    local arsenal = select(1, findFunctionalPsychicTool("Remote Arsenal"))
+    if not arsenal then
+        arsenal = select(1, getOrClonePsychicTool("Remote Arsenal"))
+    end
+    if not arsenal then return false, "functional Remote Arsenal not in Backpack/Character" end
+    cachePsychicArsenal(arsenal)
 
-    local setWeapons = arsenal:FindFirstChild("SetWeaponsClient")
+    local setWeapons = psychicSetWeaponsRemote or arsenal:FindFirstChild("SetWeaponsClient")
     if not (setWeapons and setWeapons:IsA("RemoteEvent")) then
         return false, "missing SetWeaponsClient"
     end
-    watchPsychicArsenal(arsenal)
 
     local max = limitOverride or nil
     local guns = getBindableArsenalGuns(max, allowDuplicates)
@@ -1024,12 +1105,20 @@ local function bindRemoteArsenal(limitOverride, allowDuplicates)
     end
 
     psychicLastBindRequest = #guns
+    psychicServerSlots = nil
     setWeapons:FireServer(guns, true)
-    return true, string.format("sent %d gun slot(s)%s", #guns, allowDuplicates and " with duplicates" or "")
+
+    local started = os.clock()
+    while not psychicServerSlots and os.clock() - started < 2 do
+        task.wait(0.05)
+    end
+
+    local synced = type(psychicServerSlots) == "table" and #psychicServerSlots or "not synced"
+    return true, string.format("sent %d gun slot(s)%s; server slots=%s", #guns, allowDuplicates and " with duplicates" or "", tostring(synced))
 end
 
 local function equipPsychicTool(name)
-    local tool = findOwnedPsychicTool(name)
+    local tool = select(1, findFunctionalPsychicTool(name)) or findOwnedPsychicTool(name)
     local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
     if tool and hum then
         hum:EquipTool(tool)
@@ -1182,7 +1271,7 @@ local function tryPsychicToolkit()
         watchPsychicArsenal(arsenal)
     end
 
-    local bindOk, bindStatus = bindRemoteArsenal()
+    local bindOk, bindStatus = bindRemoteArsenal(16, true)
     equipPsychicTool(editor and "Psychic Editor" or "Remote Arsenal")
 
     psychicLastStatus = string.format(
@@ -1320,31 +1409,42 @@ Player:AddButton({
     Name = "Psychic Diagnostic",
     Description = "Copy Psychic toolkit status",
     Callback = function()
-        local arsenal = findOwnedPsychicTool("Remote Arsenal")
-        local editor = findOwnedPsychicTool("Psychic Editor")
-        local setWeapons = arsenal and arsenal:FindFirstChild("SetWeaponsClient")
+        local visualArsenal = findOwnedPsychicTool("Remote Arsenal")
+        local visualEditor = findOwnedPsychicTool("Psychic Editor")
+        local arsenal = select(1, findFunctionalPsychicTool("Remote Arsenal"))
+        local editor = select(1, findFunctionalPsychicTool("Psychic Editor"))
+        local setWeapons = psychicSetWeaponsRemote or (arsenal and arsenal:FindFirstChild("SetWeaponsClient"))
+        local shoot = psychicShootRemote or (arsenal and arsenal:FindFirstChild("Shoot"))
         local msg = string.format(
             "=== CRUMB HUB PSYCHIC DIAGNOSTIC ===\n" ..
             "Last status: %s\n" ..
             "DragRange attr: %s\n" ..
             "RemoteArsenalMax attr: %s\n" ..
-            "Remote Arsenal: %s\n" ..
-            "Psychic Editor: %s\n" ..
+            "Functional Remote Arsenal: %s\n" ..
+            "Visual/Alias Remote Arsenal: %s\n" ..
+            "Functional Psychic Editor: %s\n" ..
+            "Visual/Alias Psychic Editor: %s\n" ..
             "Remote Arsenal aliases: %s\n" ..
             "Psychic Editor aliases: %s\n" ..
             "SetWeaponsClient: %s\n" ..
+            "Shoot: %s\n" ..
             "Last bind request slots: %s\n" ..
+            "Server slot cache: %s\n" ..
             "Floating previews: %s\n" ..
             "Arsenal state slots: %s",
             tostring(psychicLastStatus),
             tostring(player:GetAttribute("DragRange")),
             tostring(player:GetAttribute("RemoteArsenalMax")),
             arsenal and arsenal:GetFullName() or "missing",
+            visualArsenal and visualArsenal:GetFullName() or "missing",
             editor and editor:GetFullName() or "missing",
+            visualEditor and visualEditor:GetFullName() or "missing",
             table.concat(getPsychicAliases("Remote Arsenal"), ", "),
             table.concat(getPsychicAliases("Psychic Editor"), ", "),
             setWeapons and setWeapons:GetFullName() or "missing",
+            shoot and shoot:GetFullName() or "missing",
             tostring(psychicLastBindRequest),
+            tostring(type(psychicServerSlots) == "table" and #psychicServerSlots or "not synced"),
             floatingPreviewEnabled and "on" or "off",
             tostring(type(arsenalState) == "table" and #arsenalState or "not synced")
         )
@@ -1775,16 +1875,20 @@ autoShootConn = RunService.Heartbeat:Connect(function()
         if not hrp or not hum or hum.Health <= 0 then autoShootStatus = "no character"; return end
 
         local tool = getEquippedGunTool()
+        if not tool and psychicFunctionalArsenal then
+            tool = psychicFunctionalArsenal
+        end
         if not tool then autoShootStatus = "no equipped gun/arsenal"; return end
         watchGunTool(tool)
+        if psychicFunctionalArsenal then watchGunTool(psychicFunctionalArsenal) end
 
-        local Shoot = tool:FindFirstChild("Shoot")
+        local Shoot = tool:FindFirstChild("Shoot") or psychicShootRemote
         if not Shoot or not Shoot:IsA("RemoteEvent") then autoShootStatus = "missing Shoot remote"; return end
 
         local slotIndex, slotEntry = chooseArsenalSlot()
         directFireGunIndex = slotIndex or directFireGunIndex
 
-        local Stats = slotEntry and slotEntry.Stats or tool:FindFirstChild("Stats")
+        local Stats = slotEntry and slotEntry.Stats or tool:FindFirstChild("Stats") or (psychicFunctionalArsenal and psychicFunctionalArsenal:FindFirstChild("Stats"))
         local statAttributes = getStatsAttributes(Stats)
         local fireRate = statAttributes.FireRate or (Stats and Stats:GetAttribute("FireRate")) or 600
         local delay    = math.max(60 / fireRate, 0.08)
@@ -1802,7 +1906,8 @@ autoShootConn = RunService.Heartbeat:Connect(function()
             hitPos = hitPos + head.AssemblyLinearVelocity * 0.1
         end
 
-        replicateAim(tool, hitPos)
+        local aimTool = (tool:FindFirstChild("ReplicateAim") and tool) or psychicFunctionalArsenal or tool
+        replicateAim(aimTool, hitPos)
 
         local pellets = statAttributes.Pellets or (Stats and Stats:GetAttribute("Pellets")) or 1
         local t3 = {}
