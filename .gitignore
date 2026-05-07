@@ -12,3 +12,7 @@
 Thumbs.db
 *.tmp
 *.log
+
+# Adjacent local project folders
+roblox_testing/
+Survive-The-Apocalypse-main/
