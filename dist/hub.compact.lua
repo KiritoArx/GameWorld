@@ -578,6 +578,8 @@ local psychicShootRemote = nil
 local psychicSetWeaponsRemote = nil
 local psychicServerSlots = nil
 local watchPsychicArsenal
+local localBoundGuns = {}
+local localBoundGunCount = 0
 local PSYCHIC_TOOL_ALIASES = {
 ["Remote Arsenal"] = {"Remote Arsenal", "Ztool", "ZTool", "ztool"},
 ["Psychic Editor"] = {"Psychic Editor", "Zpsychiceditor", "ZPsychicEditor", "ZPsychic Editor", "zpsychiceditor"},
@@ -932,16 +934,24 @@ end
 end
 return guns
 end
+local function bindLocalAutoShootGuns(limitOverride, allowDuplicates)
+local guns = getBindableArsenalGuns(limitOverride, allowDuplicates)
+localBoundGuns = guns
+localBoundGunCount = #guns
+psychicLastBindRequest = #guns
+return #guns > 0, string.format("locally bound %d gun slot(s)%s", #guns, allowDuplicates and " with duplicates" or "")
+end
 local function bindRemoteArsenal(limitOverride, allowDuplicates)
+local localOk, localStatus = bindLocalAutoShootGuns(limitOverride, allowDuplicates)
 local arsenal = select(1, findFunctionalPsychicTool("Remote Arsenal"))
 if not arsenal then
 arsenal = select(1, getOrClonePsychicTool("Remote Arsenal"))
 end
-if not arsenal then return false, "functional Remote Arsenal not in Backpack/Character" end
+if not arsenal then return localOk, localStatus .. "; no functional Remote Arsenal" end
 cachePsychicArsenal(arsenal)
 local setWeapons = psychicSetWeaponsRemote or arsenal:FindFirstChild("SetWeaponsClient")
 if not (setWeapons and setWeapons:IsA("RemoteEvent")) then
-return false, "missing SetWeaponsClient"
+return localOk, localStatus .. "; missing SetWeaponsClient"
 end
 local max = limitOverride or nil
 local guns = getBindableArsenalGuns(max, allowDuplicates)
@@ -956,7 +966,7 @@ while not psychicServerSlots and os.clock() - started < 2 do
 task.wait(0.05)
 end
 local synced = type(psychicServerSlots) == "table" and #psychicServerSlots or "not synced"
-return true, string.format("sent %d gun slot(s)%s; server slots=%s", #guns, allowDuplicates and " with duplicates" or "", tostring(synced))
+return true, string.format("%s; sent remote bind; server slots=%s", localStatus, tostring(synced))
 end
 local function equipPsychicTool(name)
 local tool = select(1, findFunctionalPsychicTool(name)) or findOwnedPsychicTool(name)
@@ -997,6 +1007,13 @@ return false
 end
 local function getPreviewTools()
 local tools = {}
+if #localBoundGuns > 0 then
+for _, tool in ipairs(localBoundGuns) do
+if typeof(tool) == "Instance" and tool:IsA("Tool") and tool.Parent then
+table.insert(tools, tool)
+end
+end
+end
 if type(arsenalState) == "table" then
 for _, entry in ipairs(arsenalState) do
 local tool = entry and entry.Tool
@@ -1068,11 +1085,13 @@ local count = #previews
 local now = os.clock()
 for index, part in ipairs(previews) do
 if part.Parent then
-local angle = (index / count) * math.pi * 2 + now * 0.9
-local radius = 4 + math.min(count, 12) * 0.08
-local y = 2.5 + math.sin(now * 1.8 + index) * 0.35
-local offset = CFrame.new(math.cos(angle) * radius, y, math.sin(angle) * radius)
-part.CFrame = CFrame.lookAt((hrp.CFrame * offset).Position, hrp.Position + Vector3.new(0, y, 0))
+local angle = ((index - 1) / count) * math.pi * 2 + now * 0.75
+local radius = 3.2 + math.min(count, 12) * 0.1
+local y = 2.2 + math.sin(now * 1.5 + index) * 0.25
+local backBias = CFrame.new(0, y, 2.5)
+local orbit = CFrame.new(math.cos(angle) * radius, 0, math.sin(angle) * radius * 0.45)
+local pos = (hrp.CFrame * backBias * orbit).Position
+part.CFrame = CFrame.lookAt(pos, hrp.Position + Vector3.new(0, 1.8, 0)) * CFrame.Angles(0, math.rad(90), 0)
 end
 end
 end)
@@ -1155,6 +1174,7 @@ Description = "Bind every real inventory gun to Remote Arsenal",
 Callback = function()
 local ok, status = bindRemoteArsenal()
 psychicLastStatus = (ok and "Bind OK: " or "Bind failed: ") .. tostring(status)
+if floatingPreviewEnabled then showFloatingGunPreviews() end
 print("[CRUMB HUB] " .. psychicLastStatus)
 end,
 })
@@ -1164,6 +1184,7 @@ Description = "Send 8 arsenal slots, reusing guns if needed",
 Callback = function()
 local ok, status = bindRemoteArsenal(8, true)
 psychicLastStatus = (ok and "Overbind x8 OK: " or "Overbind x8 failed: ") .. tostring(status)
+if floatingPreviewEnabled then showFloatingGunPreviews() end
 print("[CRUMB HUB] " .. psychicLastStatus)
 end,
 })
@@ -1173,6 +1194,7 @@ Description = "Send 16 arsenal slots, reusing guns if needed",
 Callback = function()
 local ok, status = bindRemoteArsenal(16, true)
 psychicLastStatus = (ok and "Overbind x16 OK: " or "Overbind x16 failed: ") .. tostring(status)
+if floatingPreviewEnabled then showFloatingGunPreviews() end
 print("[CRUMB HUB] " .. psychicLastStatus)
 end,
 })
@@ -1233,6 +1255,7 @@ local msg = string.format(
 "SetWeaponsClient: %s\n" ..
 "Shoot: %s\n" ..
 "Last bind request slots: %s\n" ..
+"Local bound guns: %s\n" ..
 "Server slot cache: %s\n" ..
 "Floating previews: %s\n" ..
 "Arsenal state slots: %s",
@@ -1248,6 +1271,7 @@ table.concat(getPsychicAliases("Psychic Editor"), ", "),
 setWeapons and setWeapons:GetFullName() or "missing",
 shoot and shoot:GetFullName() or "missing",
 tostring(psychicLastBindRequest),
+tostring(localBoundGunCount),
 tostring(type(psychicServerSlots) == "table" and #psychicServerSlots or "not synced"),
 floatingPreviewEnabled and "on" or "off",
 tostring(type(arsenalState) == "table" and #arsenalState or "not synced")
@@ -1504,6 +1528,34 @@ end
 end
 return nil
 end
+local function isOwnedDirectGun(tool)
+if not (tool and tool:IsA("Tool")) then return false end
+if isPsychicToolName(tool.Name, "Remote Arsenal") then return false end
+if tool:GetAttribute("ToolType") ~= "Gun" then return false end
+local shoot = tool:FindFirstChild("Shoot")
+local stats = tool:FindFirstChild("Stats")
+if not (shoot and shoot:IsA("RemoteEvent") and stats) then return false end
+if stats:GetAttribute("Projectile") then return false end
+local ammo = tool:GetAttribute("Ammo")
+if typeof(ammo) == "number" and ammo <= 0 then return false end
+return true
+end
+local function getOwnedGunTools()
+local guns = {}
+local seen = {}
+local backpack = getBackpack()
+for _, container in ipairs({ player.Character, backpack }) do
+if container then
+for _, tool in ipairs(container:GetChildren()) do
+if isOwnedDirectGun(tool) and not seen[tool] then
+seen[tool] = true
+table.insert(guns, tool)
+end
+end
+end
+end
+return guns
+end
 local function watchGunTool(tool)
 if not tool or watchedGunTools[tool] then return end
 watchedGunTools[tool] = true
@@ -1516,6 +1568,25 @@ autoShootStatus = "arsenal synced: " .. tostring(count)
 print("[CRUMB HUB] Remote Arsenal state synced:", count)
 end)
 end
+end
+local function getToolBarrelPosition(tool)
+local recursiveBarrel = tool and tool:FindFirstChild("Barrel", true)
+if recursiveBarrel then
+if recursiveBarrel:IsA("Attachment") then return recursiveBarrel.WorldPosition end
+if recursiveBarrel:IsA("BasePart") then return recursiveBarrel.Position end
+end
+local model = tool and tool:FindFirstChildOfClass("Model")
+local handle = (model and model:FindFirstChild("Handle")) or (tool and tool:FindFirstChild("Handle"))
+if handle then
+local barrel = handle:FindFirstChild("Barrel")
+if barrel then
+if barrel:IsA("Attachment") then return barrel.WorldPosition end
+if barrel:IsA("BasePart") then return barrel.Position end
+end
+if handle:IsA("BasePart") then return handle.Position end
+end
+local hrp = getPlayerRoot()
+return hrp and hrp.Position or Vector3.new()
 end
 local function getBarrelPosition(tool)
 if arsenalState and arsenalState[directFireGunIndex] and arsenalState[directFireGunIndex].Barrel then
@@ -1617,18 +1688,37 @@ local char = player.Character
 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
 local hum  = char and char:FindFirstChildOfClass("Humanoid")
 if not hrp or not hum or hum.Health <= 0 then autoShootStatus = "no character"; return end
-local tool = getEquippedGunTool()
+local ownedGuns = #localBoundGuns > 0 and localBoundGuns or getOwnedGunTools()
+local filteredGuns = {}
+for _, gun in ipairs(ownedGuns) do
+if isOwnedDirectGun(gun) then
+table.insert(filteredGuns, gun)
+end
+end
+ownedGuns = filteredGuns
+local directGun = nil
+local tool = nil
+if #ownedGuns > 0 then
+local gunIndex = ((directFireGunIndex - 1) % #ownedGuns) + 1
+directGun = ownedGuns[gunIndex]
+tool = directGun
+else
+tool = getEquippedGunTool()
 if not tool and psychicFunctionalArsenal then
 tool = psychicFunctionalArsenal
 end
-if not tool then autoShootStatus = "no equipped gun/arsenal"; return end
+end
+if not tool then autoShootStatus = "no owned gun/arsenal"; return end
 watchGunTool(tool)
 if psychicFunctionalArsenal then watchGunTool(psychicFunctionalArsenal) end
-local Shoot = tool:FindFirstChild("Shoot") or psychicShootRemote
+local Shoot = (directGun and directGun:FindFirstChild("Shoot")) or tool:FindFirstChild("Shoot") or psychicShootRemote
 if not Shoot or not Shoot:IsA("RemoteEvent") then autoShootStatus = "missing Shoot remote"; return end
-local slotIndex, slotEntry = chooseArsenalSlot()
+local slotIndex, slotEntry = nil, nil
+if not directGun then
+slotIndex, slotEntry = chooseArsenalSlot()
 directFireGunIndex = slotIndex or directFireGunIndex
-local Stats = slotEntry and slotEntry.Stats or tool:FindFirstChild("Stats") or (psychicFunctionalArsenal and psychicFunctionalArsenal:FindFirstChild("Stats"))
+end
+local Stats = (directGun and directGun:FindFirstChild("Stats")) or slotEntry and slotEntry.Stats or tool:FindFirstChild("Stats") or (psychicFunctionalArsenal and psychicFunctionalArsenal:FindFirstChild("Stats"))
 local statAttributes = getStatsAttributes(Stats)
 local fireRate = statAttributes.FireRate or (Stats and Stats:GetAttribute("FireRate")) or 600
 local delay    = math.max(60 / fireRate, 0.08)
@@ -1636,13 +1726,13 @@ if now - lastDirectFire < delay then return end
 local head = getNearestHead(hrp.Position)
 if not head or not head.Parent then autoShootStatus = "no zombie target"; return end
 local zombie = head.Parent
-local barrelPos = getBarrelFromEntry(slotEntry) or getBarrelPosition(tool)
+local barrelPos = directGun and getToolBarrelPosition(directGun) or getBarrelFromEntry(slotEntry) or getBarrelPosition(tool)
 local hitPos, hitPart = getClearShotTarget(barrelPos, head, zombie)
 if not hitPos then autoShootStatus = "blocked line of sight"; return end
 if aimbotPrediction then
 hitPos = hitPos + head.AssemblyLinearVelocity * 0.1
 end
-local aimTool = (tool:FindFirstChild("ReplicateAim") and tool) or psychicFunctionalArsenal or tool
+local aimTool = (directGun and directGun:FindFirstChild("ReplicateAim") and directGun) or (tool:FindFirstChild("ReplicateAim") and tool) or psychicFunctionalArsenal or tool
 replicateAim(aimTool, hitPos)
 local pellets = statAttributes.Pellets or (Stats and Stats:GetAttribute("Pellets")) or 1
 local t3 = {}
@@ -1656,8 +1746,18 @@ HitData = {
 end
 lastDirectFire = now
 directFireCount = directFireCount + 1
-autoShootStatus = string.format("fired slot=%s pellets=%s target=%s", tostring(directFireGunIndex), tostring(pellets), zombie.Name)
-Shoot:FireServer(barrelPos, t3, directFireGunIndex)
+local fireIndex = directGun and 1 or directFireGunIndex
+autoShootStatus = string.format(
+"fired %s index=%s pellets=%s target=%s",
+directGun and directGun.Name or "arsenal",
+tostring(fireIndex),
+tostring(pellets),
+zombie.Name
+)
+Shoot:FireServer(barrelPos, t3, fireIndex)
+if directGun then
+directFireGunIndex = (directFireGunIndex % math.max(#ownedGuns, 1)) + 1
+end
 end)
 if not ok then
 autoShootStatus = "error: " .. tostring(err)
@@ -1719,6 +1819,11 @@ stats and "yes" or "NO",
 shoot and "yes" or "NO"
 )
 end
+local ownedGunNames = {}
+for _, gun in ipairs(getOwnedGunTools()) do
+table.insert(ownedGunNames, gun.Name)
+end
+local ownedGunInfo = #ownedGunNames > 0 and table.concat(ownedGunNames, ", ") or "none"
 local msg = string.format(
 "=== CRUMB HUB COMBAT DIAGNOSTIC ===\n" ..
 "-- Executor capabilities --\n" ..
@@ -1735,6 +1840,7 @@ local msg = string.format(
 "-- Auto Shoot --\n" ..
 "autoShoot toggle: %s\n" ..
 "AutoShoot status: %s\n" ..
+"Owned direct guns: %s\n" ..
 "Remote Arsenal slots: %s\n" ..
 "Direct fire count: %d (gunIndex=%d)\n" ..
 "-- Equipped tool --\n" ..
@@ -1749,6 +1855,7 @@ tostring(captureShootArgs), tostring(captureAll),
 totalFireCalls, #spyLog,
 tostring(autoShoot),
 tostring(autoShootStatus),
+ownedGunInfo,
 tostring(type(arsenalState) == "table" and #arsenalState or "not synced"),
 directFireCount, directFireGunIndex,
 toolInfo
