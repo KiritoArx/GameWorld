@@ -661,8 +661,6 @@ end)
 Player:AddSection("Psychic Toolkit")
 
 local psychicLastStatus = "not tried"
-local arsenalState = nil
-local watchedPsychicArsenals = setmetatable({}, { __mode = "k" })
 local psychicLastBindRequest = 0
 local floatingPreviewEnabled = false
 local floatingPreviewFolder = nil
@@ -670,14 +668,15 @@ local floatingPreviewConn = nil
 local psychicSpyEnabled = false
 local psychicSpyStartedAt = 0
 local psychicSpyLog = {}
-local psychicFunctionalArsenal = nil
-local psychicFunctionalEditor = nil
-local psychicShootRemote = nil
-local psychicSetWeaponsRemote = nil
-local psychicServerSlots = nil
-local watchPsychicArsenal
 local localBoundGuns = {}
 local localBoundGunCount = 0
+local fakeArsenalTool = nil
+local fakeEditorTool = nil
+local fakeEditorGui = nil
+local fakeEditorSelections = {}
+local bindLocalAutoShootGuns
+local showFloatingGunPreviews
+local openFakePsychicEditor
 local PSYCHIC_TOOL_ALIASES = {
     ["Remote Arsenal"] = {"Remote Arsenal", "Ztool", "ZTool", "ztool"},
     ["Psychic Editor"] = {"Psychic Editor", "Zpsychiceditor", "ZPsychicEditor", "ZPsychic Editor", "zpsychiceditor"},
@@ -716,135 +715,116 @@ local function findToolIn(container, name)
     end
 end
 
-local function findExactToolIn(container, name)
-    if not container then return nil end
-    local direct = container:FindFirstChild(name)
-    if direct and direct:IsA("Tool") then return direct end
-
-    for _, inst in ipairs(container:GetDescendants()) do
-        if inst:IsA("Tool") and inst.Name == name then
-            return inst
-        end
-    end
-end
-
-local function getPsychicMiscTemplate(name)
-    local items = ReplicatedStorage:FindFirstChild("Items") or ReplicatedStorage:WaitForChild("Items", 5)
-    local misc = items and (items:FindFirstChild("Misc") or items:WaitForChild("Misc", 5))
-    local tool = misc and misc:FindFirstChild(name)
-    if tool and tool:IsA("Tool") then
-        return tool, tool:GetFullName()
-    end
-end
-
-local function findFunctionalPsychicTool(name)
-    local backpack = getBackpack()
-    local cached = (name == "Remote Arsenal" and psychicFunctionalArsenal) or (name == "Psychic Editor" and psychicFunctionalEditor)
-    if cached and cached.Parent then return cached, "cached" end
-
-    for _, container in ipairs({ player.Character, backpack }) do
-        local tool = findExactToolIn(container, name)
-        if tool then
-            if name ~= "Remote Arsenal" or tool:FindFirstChild("SetWeaponsClient") then
-                return tool, "owned"
-            end
-        end
-    end
-end
-
-local function findPsychicToolTemplate(name)
-    local existing = findFunctionalPsychicTool(name)
-    if existing then return existing, "owned" end
-
-    local miscTool, miscSource = getPsychicMiscTemplate(name)
-    if miscTool then return miscTool, miscSource end
-
-    local roots = {
-        ReplicatedStorage,
-        Workspace,
-        game:GetService("StarterPack"),
-    }
-
-    for _, root in ipairs(roots) do
-        local found = findToolIn(root, name)
-        if found then
-            return found, found:GetFullName()
-        end
-    end
-end
-
-local function cachePsychicArsenal(arsenal)
-    if not arsenal then return false end
-
-    local stats = arsenal:FindFirstChild("Stats")
-    if stats then stats:SetAttribute("Max", math.max(stats:GetAttribute("Max") or 0, 16)) end
-
-    psychicFunctionalArsenal = arsenal
-    psychicShootRemote = arsenal:FindFirstChild("Shoot")
-    psychicSetWeaponsRemote = arsenal:FindFirstChild("SetWeaponsClient")
-    watchPsychicArsenal(arsenal)
-
-    if psychicSetWeaponsRemote and psychicSetWeaponsRemote:IsA("RemoteEvent") and not arsenal:GetAttribute("CRUMB_ServerSlotWatcher") then
-        arsenal:SetAttribute("CRUMB_ServerSlotWatcher", true)
-        psychicSetWeaponsRemote.OnClientEvent:Connect(function(state)
-            psychicServerSlots = state
-            arsenalState = state
-            psychicLastStatus = "server arsenal synced: " .. tostring(type(state) == "table" and #state or state)
-            print("[CRUMB HUB] " .. psychicLastStatus)
-        end)
-    end
-
-    return psychicShootRemote and psychicShootRemote:IsA("RemoteEvent")
-        and psychicSetWeaponsRemote and psychicSetWeaponsRemote:IsA("RemoteEvent")
-end
-
-local function getOrClonePsychicTool(name)
-    local backpack = getBackpack()
-    local tool, source = findPsychicToolTemplate(name)
-    if not (tool and backpack) then
-        return nil, "missing " .. name
-    end
-
-    if tool.Parent == backpack or tool.Parent == player.Character then
-        if name == "Remote Arsenal" then cachePsychicArsenal(tool) end
-        if name == "Psychic Editor" then psychicFunctionalEditor = tool end
-        return tool, "owned"
-    end
-
-    local clone = tool:Clone()
-    if name == "Remote Arsenal" then
-        local stats = clone:FindFirstChild("Stats")
-        if stats then stats:SetAttribute("Max", math.max(stats:GetAttribute("Max") or 0, 16)) end
-    end
-    clone.Parent = backpack
-    if name == "Remote Arsenal" then cachePsychicArsenal(clone) end
-    if name == "Psychic Editor" then psychicFunctionalEditor = clone end
-    return clone, "cloned from " .. tostring(source)
-end
-
 local function findOwnedPsychicTool(name)
     local backpack = getBackpack()
     return findToolIn(player.Character, name) or findToolIn(backpack, name)
 end
 
-local function getArsenalMax(arsenal)
-    local stats = arsenal and arsenal:FindFirstChild("Stats")
-    local max = stats and stats:GetAttribute("Max")
-    if typeof(max) ~= "number" then max = player:GetAttribute("RemoteArsenalMax") end
-    if typeof(max) ~= "number" then max = 3 end
-    return math.max(1, max)
+local function isFakePsychicTool(tool, canonical)
+    if not (tool and tool:IsA("Tool")) then return false end
+    if canonical == "Remote Arsenal" then
+        return tool:GetAttribute("CRUMB_FakeRemoteArsenal") == true
+            or tool:GetAttribute("ZPsychicRemoteArsenalVisual") == true
+            or tool.Name == "ZTool"
+    end
+    if canonical == "Psychic Editor" then
+        return tool:GetAttribute("CRUMB_FakePsychicEditor") == true
+            or tool.Name == "ZPsychicEditor"
+    end
+    return false
 end
 
-function watchPsychicArsenal(arsenal)
-    if not arsenal or watchedPsychicArsenals[arsenal] then return end
-    local setWeapons = arsenal:FindFirstChild("SetWeaponsClient")
-    if setWeapons and setWeapons:IsA("RemoteEvent") then
-        watchedPsychicArsenals[arsenal] = true
-        setWeapons.OnClientEvent:Connect(function(state)
-            arsenalState = state
-            psychicServerSlots = state
-            print("[CRUMB HUB] Psychic arsenal synced:", type(state) == "table" and #state or tostring(state))
-        end)
+local function getEquippedTool()
+    local char = player.Character
+    if not char then return nil end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then return tool end
+    end
+end
+
+local function makeFakeToolHandle(color)
+    local handle = Instance.new("Part")
+    handle.Name = "Handle"
+    handle.Size = Vector3.new(1.5, 0.35, 0.75)
+    handle.Color = color
+    handle.Material = Enum.Material.Neon
+    handle.CanCollide = false
+    handle.CanTouch = false
+    handle.CanQuery = false
+    handle.Massless = true
+    return handle
+end
+
+local function wireFakePsychicTool(tool)
+    if not tool or tool:GetAttribute("CRUMB_FakeWired") then return end
+    tool:SetAttribute("CRUMB_FakeWired", true)
+
+    tool.Equipped:Connect(function()
+        if isFakePsychicTool(tool, "Psychic Editor") then
+            task.defer(function()
+                if openFakePsychicEditor then openFakePsychicEditor() end
+            end)
+            return
+        end
+
+        if isFakePsychicTool(tool, "Remote Arsenal") then
+            if localBoundGunCount == 0 then
+                bindLocalAutoShootGuns(nil, false)
+            end
+            if floatingPreviewEnabled then
+                showFloatingGunPreviews()
+            end
+            psychicLastStatus = "fake arsenal equipped; local bound guns=" .. tostring(localBoundGunCount)
+            print("[CRUMB HUB] " .. psychicLastStatus)
+        end
+    end)
+end
+
+local function getOrCreateFakePsychicTool(name)
+    local backpack = getBackpack()
+    if not backpack then return nil, "missing Backpack" end
+
+    if name == "Remote Arsenal" then
+        local existing = findToolIn(player.Character, "Remote Arsenal") or findToolIn(backpack, "Remote Arsenal")
+        if existing and isFakePsychicTool(existing, "Remote Arsenal") then
+            fakeArsenalTool = existing
+            wireFakePsychicTool(existing)
+            return existing, "fake existing"
+        end
+
+        local tool = Instance.new("Tool")
+        tool.Name = "ZTool"
+        tool.ToolTip = "Remote Arsenal"
+        tool.RequiresHandle = true
+        tool.CanBeDropped = false
+        tool:SetAttribute("ZPsychicRemoteArsenalVisual", true)
+        tool:SetAttribute("CRUMB_FakeRemoteArsenal", true)
+        makeFakeToolHandle(Color3.fromRGB(90, 215, 255)).Parent = tool
+        tool.Parent = backpack
+        fakeArsenalTool = tool
+        wireFakePsychicTool(tool)
+        return tool, "fake local"
+    end
+
+    if name == "Psychic Editor" then
+        local existing = findToolIn(player.Character, "Psychic Editor") or findToolIn(backpack, "Psychic Editor")
+        if existing and isFakePsychicTool(existing, "Psychic Editor") then
+            fakeEditorTool = existing
+            wireFakePsychicTool(existing)
+            return existing, "fake existing"
+        end
+
+        local tool = Instance.new("Tool")
+        tool.Name = "ZPsychicEditor"
+        tool.ToolTip = "Psychic Editor"
+        tool.RequiresHandle = true
+        tool.CanBeDropped = false
+        tool:SetAttribute("CRUMB_FakePsychicEditor", true)
+        makeFakeToolHandle(Color3.fromRGB(210, 140, 255)).Parent = tool
+        tool.Parent = backpack
+        fakeEditorTool = tool
+        wireFakePsychicTool(tool)
+        return tool, "fake local"
     end
 end
 
@@ -1009,7 +989,6 @@ local function buildPsychicSnapshot(label)
     spyDeepTool(lines, editorAlias, "Psychic Editor alias deep")
     spyScanPsychicObjects(lines)
     spyLine(lines, "Last bind request slots: " .. tostring(psychicLastBindRequest))
-    spyLine(lines, "Arsenal state slots: " .. tostring(type(arsenalState) == "table" and #arsenalState or "not synced"))
     return lines
 end
 
@@ -1087,7 +1066,7 @@ local function getBindableArsenalGuns(limit, allowDuplicates)
     return guns
 end
 
-local function bindLocalAutoShootGuns(limitOverride, allowDuplicates)
+function bindLocalAutoShootGuns(limitOverride, allowDuplicates)
     local guns = getBindableArsenalGuns(limitOverride, allowDuplicates)
     localBoundGuns = guns
     localBoundGunCount = #guns
@@ -1096,40 +1075,13 @@ local function bindLocalAutoShootGuns(limitOverride, allowDuplicates)
 end
 
 local function bindRemoteArsenal(limitOverride, allowDuplicates)
-    local localOk, localStatus = bindLocalAutoShootGuns(limitOverride, allowDuplicates)
-    local arsenal = select(1, findFunctionalPsychicTool("Remote Arsenal"))
-    if not arsenal then
-        arsenal = select(1, getOrClonePsychicTool("Remote Arsenal"))
-    end
-    if not arsenal then return localOk, localStatus .. "; no functional Remote Arsenal" end
-    cachePsychicArsenal(arsenal)
-
-    local setWeapons = psychicSetWeaponsRemote or arsenal:FindFirstChild("SetWeaponsClient")
-    if not (setWeapons and setWeapons:IsA("RemoteEvent")) then
-        return localOk, localStatus .. "; missing SetWeaponsClient"
-    end
-
-    local max = limitOverride or nil
-    local guns = getBindableArsenalGuns(max, allowDuplicates)
-    if #guns == 0 then
-        return false, "no non-projectile guns in Backpack"
-    end
-
-    psychicLastBindRequest = #guns
-    psychicServerSlots = nil
-    setWeapons:FireServer(guns, true)
-
-    local started = os.clock()
-    while not psychicServerSlots and os.clock() - started < 2 do
-        task.wait(0.05)
-    end
-
-    local synced = type(psychicServerSlots) == "table" and #psychicServerSlots or "not synced"
-    return true, string.format("%s; sent remote bind; server slots=%s", localStatus, tostring(synced))
+    local ok, status = bindLocalAutoShootGuns(limitOverride, allowDuplicates)
+    if floatingPreviewEnabled then showFloatingGunPreviews() end
+    return ok, status .. "; fake arsenal only"
 end
 
 local function equipPsychicTool(name)
-    local tool = select(1, findFunctionalPsychicTool(name)) or findOwnedPsychicTool(name)
+    local tool = select(1, getOrCreateFakePsychicTool(name))
     local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
     if tool and hum then
         hum:EquipTool(tool)
@@ -1139,36 +1091,266 @@ local function equipPsychicTool(name)
 end
 
 local function setFreePsychicAttrs()
-    player:SetAttribute("Class", "Psychic")
-    player:SetAttribute("DragRange", math.max(player:GetAttribute("DragRange") or 0, 12))
-    player:SetAttribute("RemoteArsenalMax", math.max(player:GetAttribute("RemoteArsenalMax") or 0, 16))
-    player:SetAttribute("PsychicShieldHealth", math.max(player:GetAttribute("PsychicShieldHealth") or 0, 50))
+    player:SetAttribute("CRUMB_FakePsychic", true)
+    player:SetAttribute("CRUMB_FakeRemoteArsenalMax", 16)
 
     local char = player.Character
     if char then
-        char:SetAttribute("Class", "Psychic")
-        char:SetAttribute("DragRange", math.max(char:GetAttribute("DragRange") or 0, 12))
-        char:SetAttribute("RemoteArsenalMax", math.max(char:GetAttribute("RemoteArsenalMax") or 0, 16))
-        char:SetAttribute("PsychicShieldHealth", math.max(char:GetAttribute("PsychicShieldHealth") or 0, 50))
+        char:SetAttribute("CRUMB_FakePsychic", true)
+        char:SetAttribute("CRUMB_FakeRemoteArsenalMax", 16)
     end
 end
 
-local function openPsychicEditor()
-    local gui = player:FindFirstChild("PlayerGui")
-    local toolUI = gui and gui:FindFirstChild("ToolUI")
-    local editor = toolUI and toolUI:FindFirstChild("PsychicEditor")
-
-    if editor then
-        editor.Visible = true
-        psychicLastStatus = "opened PsychicEditor UI"
-        print("[CRUMB HUB] Opened PsychicEditor UI")
-        return true
+local function bindSelectedFakeEditorGuns()
+    local guns = {}
+    for _, gun in ipairs(getBindableArsenalGuns(nil, false)) do
+        if fakeEditorSelections[gun] then
+            table.insert(guns, gun)
+        end
     end
 
-    equipPsychicTool("Psychic Editor")
-    psychicLastStatus = "PsychicEditor UI missing; equipped editor tool"
-    warn("[CRUMB HUB] PsychicEditor UI missing; equipped editor tool if available")
-    return false
+    localBoundGuns = guns
+    localBoundGunCount = #guns
+    psychicLastBindRequest = #guns
+    psychicLastStatus = string.format("fake editor bound %d gun(s)", #guns)
+    if floatingPreviewEnabled then showFloatingGunPreviews() end
+    print("[CRUMB HUB] " .. psychicLastStatus)
+    return #guns > 0
+end
+
+local function rebuildFakePsychicEditorList()
+    if not fakeEditorGui then return end
+    local frame = fakeEditorGui:FindFirstChild("Panel")
+    local list = frame and frame:FindFirstChild("List")
+    local subtitle = frame and frame:FindFirstChild("Subtitle")
+    if not list then return end
+
+    for _, child in ipairs(list:GetChildren()) do
+        if child:GetAttribute("CRUMB_Row") then
+            child:Destroy()
+        end
+    end
+
+    local guns = getBindableArsenalGuns(nil, false)
+    if subtitle then
+        subtitle.Text = string.format("Choose owned guns to control (%d found)", #guns)
+    end
+
+    for _, gun in ipairs(guns) do
+        if fakeEditorSelections[gun] == nil then
+            fakeEditorSelections[gun] = true
+        end
+
+        local row = Instance.new("TextButton")
+        row.Name = "Gun_" .. gun.Name
+        row:SetAttribute("CRUMB_Row", true)
+        row.Size = UDim2.new(1, -8, 0, 34)
+        row.BackgroundColor3 = fakeEditorSelections[gun] and Color3.fromRGB(34, 88, 108) or Color3.fromRGB(34, 34, 40)
+        row.BorderSizePixel = 0
+        row.TextColor3 = Color3.fromRGB(245, 248, 255)
+        row.TextSize = 14
+        row.Font = Enum.Font.GothamSemibold
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.AutoButtonColor = true
+        row.Parent = list
+
+        local pad = Instance.new("UIPadding")
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.Parent = row
+
+        local function refresh()
+            local ammo = gun:GetAttribute("Ammo")
+            local ammoText = typeof(ammo) == "number" and ("  Ammo: " .. tostring(ammo)) or ""
+            row.Text = string.format("[%s] %s%s", fakeEditorSelections[gun] and "x" or " ", gun.Name, ammoText)
+            row.BackgroundColor3 = fakeEditorSelections[gun] and Color3.fromRGB(34, 88, 108) or Color3.fromRGB(34, 34, 40)
+        end
+
+        row.MouseButton1Click:Connect(function()
+            fakeEditorSelections[gun] = not fakeEditorSelections[gun]
+            refresh()
+        end)
+        refresh()
+    end
+
+    list.CanvasSize = UDim2.new(0, 0, 0, math.max(#guns * 38 + 8, 8))
+end
+
+local function ensureFakePsychicEditorGui()
+    local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+    if not playerGui then return nil end
+
+    if fakeEditorGui and fakeEditorGui.Parent then
+        return fakeEditorGui
+    end
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "CRUMB_PsychicEditorGui"
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.Enabled = false
+    gui.Parent = playerGui
+
+    local panel = Instance.new("Frame")
+    panel.Name = "Panel"
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+    panel.Size = UDim2.new(0, 390, 0, 430)
+    panel.BackgroundColor3 = Color3.fromRGB(18, 19, 24)
+    panel.BorderSizePixel = 0
+    panel.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = panel
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(95, 190, 230)
+    stroke.Thickness = 1
+    stroke.Parent = panel
+
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.BackgroundTransparency = 1
+    title.Position = UDim2.new(0, 18, 0, 14)
+    title.Size = UDim2.new(1, -70, 0, 28)
+    title.Text = "Psychic Editor"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 22
+    title.Font = Enum.Font.GothamBold
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = panel
+
+    local subtitle = Instance.new("TextLabel")
+    subtitle.Name = "Subtitle"
+    subtitle.BackgroundTransparency = 1
+    subtitle.Position = UDim2.new(0, 18, 0, 44)
+    subtitle.Size = UDim2.new(1, -36, 0, 22)
+    subtitle.Text = "Choose owned guns to control"
+    subtitle.TextColor3 = Color3.fromRGB(180, 210, 225)
+    subtitle.TextSize = 13
+    subtitle.Font = Enum.Font.Gotham
+    subtitle.TextXAlignment = Enum.TextXAlignment.Left
+    subtitle.Parent = panel
+
+    local close = Instance.new("TextButton")
+    close.Name = "Close"
+    close.AnchorPoint = Vector2.new(1, 0)
+    close.Position = UDim2.new(1, -12, 0, 12)
+    close.Size = UDim2.new(0, 34, 0, 30)
+    close.Text = "X"
+    close.TextSize = 16
+    close.Font = Enum.Font.GothamBold
+    close.TextColor3 = Color3.fromRGB(255, 255, 255)
+    close.BackgroundColor3 = Color3.fromRGB(52, 52, 60)
+    close.BorderSizePixel = 0
+    close.Parent = panel
+
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 6)
+    closeCorner.Parent = close
+
+    local list = Instance.new("ScrollingFrame")
+    list.Name = "List"
+    list.Position = UDim2.new(0, 18, 0, 78)
+    list.Size = UDim2.new(1, -36, 1, -148)
+    list.BackgroundColor3 = Color3.fromRGB(24, 25, 31)
+    list.BorderSizePixel = 0
+    list.ScrollBarThickness = 5
+    list.CanvasSize = UDim2.new(0, 0, 0, 0)
+    list.Parent = panel
+
+    local listCorner = Instance.new("UICorner")
+    listCorner.CornerRadius = UDim.new(0, 6)
+    listCorner.Parent = list
+
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 5)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = list
+
+    local listPadding = Instance.new("UIPadding")
+    listPadding.PaddingTop = UDim.new(0, 6)
+    listPadding.PaddingLeft = UDim.new(0, 4)
+    listPadding.PaddingRight = UDim.new(0, 4)
+    listPadding.Parent = list
+
+    local selectAll = Instance.new("TextButton")
+    selectAll.Name = "SelectAll"
+    selectAll.Position = UDim2.new(0, 18, 1, -52)
+    selectAll.Size = UDim2.new(0.31, -8, 0, 36)
+    selectAll.Text = "All"
+    selectAll.TextSize = 14
+    selectAll.Font = Enum.Font.GothamBold
+    selectAll.TextColor3 = Color3.fromRGB(255, 255, 255)
+    selectAll.BackgroundColor3 = Color3.fromRGB(58, 65, 74)
+    selectAll.BorderSizePixel = 0
+    selectAll.Parent = panel
+
+    local clear = selectAll:Clone()
+    clear.Name = "Clear"
+    clear.Position = UDim2.new(0.345, 0, 1, -52)
+    clear.Text = "Clear"
+    clear.Parent = panel
+
+    local bind = selectAll:Clone()
+    bind.Name = "Bind"
+    bind.Position = UDim2.new(0.67, 0, 1, -52)
+    bind.Size = UDim2.new(0.33, -18, 0, 36)
+    bind.Text = "Bind"
+    bind.BackgroundColor3 = Color3.fromRGB(28, 118, 146)
+    bind.Parent = panel
+
+    for _, button in ipairs({ selectAll, clear, bind }) do
+        local buttonCorner = Instance.new("UICorner")
+        buttonCorner.CornerRadius = UDim.new(0, 6)
+        buttonCorner.Parent = button
+    end
+
+    close.MouseButton1Click:Connect(function()
+        gui.Enabled = false
+    end)
+
+    selectAll.MouseButton1Click:Connect(function()
+        for _, gun in ipairs(getBindableArsenalGuns(nil, false)) do
+            fakeEditorSelections[gun] = true
+        end
+        rebuildFakePsychicEditorList()
+    end)
+
+    clear.MouseButton1Click:Connect(function()
+        for gun in pairs(fakeEditorSelections) do
+            fakeEditorSelections[gun] = false
+        end
+        rebuildFakePsychicEditorList()
+    end)
+
+    bind.MouseButton1Click:Connect(function()
+        bindSelectedFakeEditorGuns()
+        gui.Enabled = false
+    end)
+
+    fakeEditorGui = gui
+    return gui
+end
+
+openFakePsychicEditor = function()
+    getOrCreateFakePsychicTool("Psychic Editor")
+    local gui = ensureFakePsychicEditorGui()
+    if not gui then
+        psychicLastStatus = "fake Psychic Editor UI failed"
+        warn("[CRUMB HUB] " .. psychicLastStatus)
+        return false
+    end
+
+    rebuildFakePsychicEditorList()
+    gui.Enabled = true
+    psychicLastStatus = "opened fake Psychic Editor UI"
+    print("[CRUMB HUB] " .. psychicLastStatus)
+    return true
+end
+
+local function openPsychicEditor()
+    return openFakePsychicEditor()
 end
 
 local function getPreviewTools()
@@ -1177,15 +1359,6 @@ local function getPreviewTools()
     if #localBoundGuns > 0 then
         for _, tool in ipairs(localBoundGuns) do
             if typeof(tool) == "Instance" and tool:IsA("Tool") and tool.Parent then
-                table.insert(tools, tool)
-            end
-        end
-    end
-
-    if type(arsenalState) == "table" then
-        for _, entry in ipairs(arsenalState) do
-            local tool = entry and entry.Tool
-            if typeof(tool) == "Instance" and tool:IsA("Tool") then
                 table.insert(tools, tool)
             end
         end
@@ -1210,33 +1383,93 @@ local function clearFloatingGunPreviews()
 end
 
 local function createPreviewPart(tool)
-    local root = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart", true)
-    local part
+    local model = Instance.new("Model")
+    model.Name = tool.Name
 
-    if root and root:IsA("BasePart") then
-        part = root:Clone()
-        for _, inst in ipairs(part:GetDescendants()) do
-            if inst:IsA("Script") or inst:IsA("LocalScript") then
-                inst:Destroy()
-            end
+    local sourceParts = {}
+    for _, inst in ipairs(tool:GetDescendants()) do
+        if inst:IsA("BasePart") then
+            table.insert(sourceParts, inst)
         end
-    else
-        part = Instance.new("Part")
-        part.Size = Vector3.new(1.5, 0.35, 0.6)
-        part.Color = Color3.fromRGB(80, 220, 255)
-        part.Material = Enum.Material.Neon
     end
 
-    part.Name = tool.Name
-    part.Anchored = true
-    part.CanCollide = false
-    part.CanTouch = false
-    part.CanQuery = false
-    part.Massless = true
-    return part
+    local primary
+    local sourcePivot = CFrame.new()
+    local pivotOk, pivotValue = pcall(function()
+        return tool:GetPivot()
+    end)
+    if pivotOk and typeof(pivotValue) == "CFrame" then
+        sourcePivot = pivotValue
+    else
+        local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildWhichIsA("BasePart", true)
+        if handle and handle:IsA("BasePart") then
+            sourcePivot = handle.CFrame
+        end
+    end
+    for _, source in ipairs(sourceParts) do
+        local clone = source:Clone()
+        clone.Name = source.Name
+        clone.Anchored = true
+        clone.CanCollide = false
+        clone.CanTouch = false
+        clone.CanQuery = false
+        clone.Massless = true
+        clone.Transparency = math.min(clone.Transparency, 0.15)
+        clone.LocalTransparencyModifier = 0
+
+        for _, inst in ipairs(clone:GetDescendants()) do
+            if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
+                inst:Destroy()
+            elseif inst:IsA("BasePart") then
+                inst.Anchored = true
+                inst.CanCollide = false
+                inst.CanTouch = false
+                inst.CanQuery = false
+                inst.Transparency = math.min(inst.Transparency, 0.15)
+                inst.LocalTransparencyModifier = 0
+            end
+        end
+
+        clone.CFrame = source.CFrame
+        clone.Parent = model
+        if not primary or source.Name == "Handle" then
+            primary = clone
+        end
+    end
+
+    if not primary then
+        primary = Instance.new("Part")
+        primary.Name = "PreviewBody"
+        primary.Size = Vector3.new(1.8, 0.35, 0.75)
+        primary.Color = Color3.fromRGB(80, 220, 255)
+        primary.Material = Enum.Material.Neon
+        primary.Anchored = true
+        primary.CanCollide = false
+        primary.CanTouch = false
+        primary.CanQuery = false
+        primary.Parent = model
+        sourcePivot = CFrame.new()
+    end
+
+    model.PrimaryPart = primary
+    model:SetAttribute("CRUMB_SourcePivot", true)
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "CRUMB_VisibleOutline"
+    highlight.FillTransparency = 0.75
+    highlight.OutlineTransparency = 0
+    highlight.FillColor = Color3.fromRGB(50, 190, 230)
+    highlight.OutlineColor = Color3.fromRGB(170, 245, 255)
+    highlight.Parent = model
+
+    pcall(function()
+        model:PivotTo(sourcePivot)
+    end)
+
+    return model
 end
 
-local function showFloatingGunPreviews()
+function showFloatingGunPreviews()
     clearFloatingGunPreviews()
 
     floatingPreviewFolder = Instance.new("Folder")
@@ -1245,9 +1478,9 @@ local function showFloatingGunPreviews()
 
     local previews = {}
     for _, tool in ipairs(getPreviewTools()) do
-        local part = createPreviewPart(tool)
-        part.Parent = floatingPreviewFolder
-        table.insert(previews, part)
+        local preview = createPreviewPart(tool)
+        preview.Parent = floatingPreviewFolder
+        table.insert(previews, preview)
         if #previews >= 24 then break end
     end
 
@@ -1263,15 +1496,15 @@ local function showFloatingGunPreviews()
 
         local count = #previews
         local now = os.clock()
-        for index, part in ipairs(previews) do
-            if part.Parent then
+        for index, preview in ipairs(previews) do
+            if preview.Parent then
                 local angle = ((index - 1) / count) * math.pi * 2 + now * 0.75
                 local radius = 3.2 + math.min(count, 12) * 0.1
                 local y = 2.2 + math.sin(now * 1.5 + index) * 0.25
                 local backBias = CFrame.new(0, y, 2.5)
                 local orbit = CFrame.new(math.cos(angle) * radius, 0, math.sin(angle) * radius * 0.45)
                 local pos = (hrp.CFrame * backBias * orbit).Position
-                part.CFrame = CFrame.lookAt(pos, hrp.Position + Vector3.new(0, 1.8, 0)) * CFrame.Angles(0, math.rad(90), 0)
+                preview:PivotTo(CFrame.lookAt(pos, hrp.Position + Vector3.new(0, 1.8, 0)) * CFrame.Angles(0, math.rad(90), 0))
             end
         end
     end)
@@ -1283,20 +1516,14 @@ end
 local function tryPsychicToolkit()
     setFreePsychicAttrs()
 
-    local arsenal, arsenalSource = getOrClonePsychicTool("Remote Arsenal")
-    local editor, editorSource = getOrClonePsychicTool("Psychic Editor")
-
-    if arsenal then
-        local stats = arsenal:FindFirstChild("Stats")
-        if stats then stats:SetAttribute("Max", math.max(stats:GetAttribute("Max") or 0, 16)) end
-        watchPsychicArsenal(arsenal)
-    end
+    local arsenal, arsenalSource = getOrCreateFakePsychicTool("Remote Arsenal")
+    local editor, editorSource = getOrCreateFakePsychicTool("Psychic Editor")
 
     local bindOk, bindStatus = bindRemoteArsenal(16, true)
-    equipPsychicTool(editor and "Psychic Editor" or "Remote Arsenal")
+    equipPsychicTool("Remote Arsenal")
 
     psychicLastStatus = string.format(
-        "Arsenal=%s (%s), Editor=%s (%s), Bind=%s",
+        "Fake Arsenal=%s (%s), Fake Editor=%s (%s), Bind=%s",
         arsenal and "yes" or "NO",
         tostring(arsenalSource),
         editor and "yes" or "NO",
@@ -1308,26 +1535,23 @@ end
 
 Player:AddButton({
     Name = "Enable Free Psychic",
-    Description = "Grant local Psychic attributes, toolkit, and bind guns",
+    Description = "Create fake Psychic tools and locally bind owned guns",
     Callback = tryPsychicToolkit,
 })
 
 Player:AddButton({
     Name = "Open Psychic Editor",
-    Description = "Open the Psychic editor UI if it exists",
+    Description = "Open CRUMB's local Psychic-style gun binder",
     Callback = function()
-        getOrClonePsychicTool("Psychic Editor")
-        equipPsychicTool("Psychic Editor")
-        task.wait(0.1)
         openPsychicEditor()
     end,
 })
 
 Player:AddButton({
     Name = "Spawn Psychic Editor Tool",
-    Description = "Clone or equip Psychic Editor",
+    Description = "Create CRUMB's local editor opener tool",
     Callback = function()
-        local tool, source = getOrClonePsychicTool("Psychic Editor")
+        local tool, source = getOrCreateFakePsychicTool("Psychic Editor")
         if tool then
             equipPsychicTool("Psychic Editor")
             psychicLastStatus = "Psychic Editor ready from " .. tostring(source)
@@ -1356,13 +1580,13 @@ Player:AddToggle({
 
 Player:AddButton({
     Name = "Get Psychic Toolkit",
-    Description = "Legacy shortcut for free Psychic setup",
+    Description = "Create fake visual tools and bind owned guns",
     Callback = tryPsychicToolkit,
 })
 
 Player:AddButton({
     Name = "Bind All Arsenal Guns",
-    Description = "Bind every real inventory gun to Remote Arsenal",
+    Description = "Locally bind every real inventory gun",
     Callback = function()
         local ok, status = bindRemoteArsenal()
         psychicLastStatus = (ok and "Bind OK: " or "Bind failed: ") .. tostring(status)
@@ -1373,7 +1597,7 @@ Player:AddButton({
 
 Player:AddButton({
     Name = "Overbind Arsenal x8",
-    Description = "Send 8 arsenal slots, reusing guns if needed",
+    Description = "Locally bind 8 slots, reusing guns if needed",
     Callback = function()
         local ok, status = bindRemoteArsenal(8, true)
         psychicLastStatus = (ok and "Overbind x8 OK: " or "Overbind x8 failed: ") .. tostring(status)
@@ -1384,7 +1608,7 @@ Player:AddButton({
 
 Player:AddButton({
     Name = "Overbind Arsenal x16",
-    Description = "Send 16 arsenal slots, reusing guns if needed",
+    Description = "Locally bind 16 slots, reusing guns if needed",
     Callback = function()
         local ok, status = bindRemoteArsenal(16, true)
         psychicLastStatus = (ok and "Overbind x16 OK: " or "Overbind x16 failed: ") .. tostring(status)
@@ -1433,46 +1657,40 @@ Player:AddButton({
     Name = "Psychic Diagnostic",
     Description = "Copy Psychic toolkit status",
     Callback = function()
-        local visualArsenal = findOwnedPsychicTool("Remote Arsenal")
-        local visualEditor = findOwnedPsychicTool("Psychic Editor")
-        local arsenal = select(1, findFunctionalPsychicTool("Remote Arsenal"))
-        local editor = select(1, findFunctionalPsychicTool("Psychic Editor"))
-        local setWeapons = psychicSetWeaponsRemote or (arsenal and arsenal:FindFirstChild("SetWeaponsClient"))
-        local shoot = psychicShootRemote or (arsenal and arsenal:FindFirstChild("Shoot"))
+        local visualArsenal = (fakeArsenalTool and fakeArsenalTool.Parent and fakeArsenalTool) or findOwnedPsychicTool("Remote Arsenal")
+        local visualEditor = (fakeEditorTool and fakeEditorTool.Parent and fakeEditorTool) or findOwnedPsychicTool("Psychic Editor")
+        local equipped = getEquippedTool()
+        local boundNames = {}
+        for _, gun in ipairs(localBoundGuns) do
+            if typeof(gun) == "Instance" and gun.Parent then
+                table.insert(boundNames, gun.Name)
+            end
+        end
         local msg = string.format(
             "=== CRUMB HUB PSYCHIC DIAGNOSTIC ===\n" ..
             "Last status: %s\n" ..
-            "DragRange attr: %s\n" ..
-            "RemoteArsenalMax attr: %s\n" ..
-            "Functional Remote Arsenal: %s\n" ..
-            "Visual/Alias Remote Arsenal: %s\n" ..
-            "Functional Psychic Editor: %s\n" ..
-            "Visual/Alias Psychic Editor: %s\n" ..
+            "FakePsychic attr: %s\n" ..
+            "Fake Remote Arsenal: %s\n" ..
+            "Fake Psychic Editor: %s\n" ..
+            "Equipped tool: %s\n" ..
             "Remote Arsenal aliases: %s\n" ..
             "Psychic Editor aliases: %s\n" ..
-            "SetWeaponsClient: %s\n" ..
-            "Shoot: %s\n" ..
             "Last bind request slots: %s\n" ..
             "Local bound guns: %s\n" ..
-            "Server slot cache: %s\n" ..
+            "Local bound names: %s\n" ..
             "Floating previews: %s\n" ..
-            "Arsenal state slots: %s",
+            "Real Remote Arsenal path used: no",
             tostring(psychicLastStatus),
-            tostring(player:GetAttribute("DragRange")),
-            tostring(player:GetAttribute("RemoteArsenalMax")),
-            arsenal and arsenal:GetFullName() or "missing",
+            tostring(player:GetAttribute("CRUMB_FakePsychic")),
             visualArsenal and visualArsenal:GetFullName() or "missing",
-            editor and editor:GetFullName() or "missing",
             visualEditor and visualEditor:GetFullName() or "missing",
+            equipped and equipped:GetFullName() or "none",
             table.concat(getPsychicAliases("Remote Arsenal"), ", "),
             table.concat(getPsychicAliases("Psychic Editor"), ", "),
-            setWeapons and setWeapons:GetFullName() or "missing",
-            shoot and shoot:GetFullName() or "missing",
             tostring(psychicLastBindRequest),
             tostring(localBoundGunCount),
-            tostring(type(psychicServerSlots) == "table" and #psychicServerSlots or "not synced"),
-            floatingPreviewEnabled and "on" or "off",
-            tostring(type(arsenalState) == "table" and #arsenalState or "not synced")
+            #boundNames > 0 and table.concat(boundNames, ", ") or "none",
+            floatingPreviewEnabled and "on" or "off"
         )
         print(msg)
         if type(setclipboard) == "function" then
@@ -1584,8 +1802,6 @@ local aimbotRange   = 200
 local aimbotPrediction = false
 local lastAutoShoot = 0
 local autoShootConn = nil
-arsenalState = arsenalState or nil
-local watchedGunTools = setmetatable({}, { __mode = "k" })
 local lastReplicateAim = 0
 local autoShootStatus = "idle"
 
@@ -1752,19 +1968,10 @@ local lastDirectFire = 0
 local directFireCount = 0
 local directFireGunIndex = 1  -- player has one gun in slot 1; can be tweaked if needed
 
-local function getEquippedGunTool()
-    local char = player.Character
-    if not char then return nil end
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") and (
-            tool:GetAttribute("ToolType") == "Gun"
-            or tool:FindFirstChild("Shoot")
-            or isPsychicToolName(tool.Name, "Remote Arsenal")
-        ) then
-            return tool
-        end
-    end
-    return nil
+local function isArsenalVisualTool(tool)
+    return isFakePsychicTool(tool, "Remote Arsenal") or (
+        tool and tool:IsA("Tool") and tool:GetAttribute("ZPsychicRemoteArsenalVisual") == true
+    )
 end
 
 local function isOwnedDirectGun(tool)
@@ -1801,21 +2008,6 @@ local function getOwnedGunTools()
     return guns
 end
 
-local function watchGunTool(tool)
-    if not tool or watchedGunTools[tool] then return end
-    watchedGunTools[tool] = true
-
-    local setWeapons = tool:FindFirstChild("SetWeaponsClient")
-    if setWeapons and setWeapons:IsA("RemoteEvent") then
-        setWeapons.OnClientEvent:Connect(function(state)
-            arsenalState = state
-            local count = type(state) == "table" and #state or 0
-            autoShootStatus = "arsenal synced: " .. tostring(count)
-            print("[CRUMB HUB] Remote Arsenal state synced:", count)
-        end)
-    end
-end
-
 local function getToolBarrelPosition(tool)
     local recursiveBarrel = tool and tool:FindFirstChild("Barrel", true)
     if recursiveBarrel then
@@ -1838,82 +2030,11 @@ local function getToolBarrelPosition(tool)
     return hrp and hrp.Position or Vector3.new()
 end
 
-local function getBarrelPosition(tool)
-    if arsenalState and arsenalState[directFireGunIndex] and arsenalState[directFireGunIndex].Barrel then
-        local barrel = arsenalState[directFireGunIndex].Barrel
-        if typeof(barrel) == "Instance" then
-            if barrel:IsA("Attachment") then return barrel.WorldPosition end
-            if barrel:IsA("BasePart") then return barrel.Position end
-        end
-    end
-
-    local recursiveBarrel = tool:FindFirstChild("Barrel", true)
-    if recursiveBarrel then
-        if recursiveBarrel:IsA("Attachment") then return recursiveBarrel.WorldPosition end
-        if recursiveBarrel:IsA("BasePart") then return recursiveBarrel.Position end
-    end
-
-    local model = tool:FindFirstChildOfClass("Model")
-    if model then
-        local handle = model:FindFirstChild("Handle")
-        if handle then
-            local barrel = handle:FindFirstChild("Barrel")
-            if barrel then
-                if barrel:IsA("Attachment") then return barrel.WorldPosition end
-                if barrel:IsA("BasePart")   then return barrel.Position      end
-            end
-            if handle:IsA("BasePart") then return handle.Position end
-        end
-    end
-    local handle = tool:FindFirstChild("Handle")
-    if handle and handle:IsA("BasePart") then return handle.Position end
-    local char = player.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    return hrp and hrp.Position or Vector3.new()
-end
-
-local function getBarrelFromEntry(entry)
-    local barrel = entry and entry.Barrel
-    if typeof(barrel) == "Instance" then
-        if barrel:IsA("Attachment") then return barrel.WorldPosition end
-        if barrel:IsA("BasePart") then return barrel.Position end
-    end
-end
-
 local function getStatsAttributes(stats)
     if typeof(stats) == "Instance" and stats.GetAttributes then
         return stats:GetAttributes()
     end
     return {}
-end
-
-local function chooseArsenalSlot()
-    if type(arsenalState) ~= "table" then
-        if psychicLastBindRequest and psychicLastBindRequest > 1 then
-            directFireGunIndex = (directFireGunIndex % psychicLastBindRequest) + 1
-        end
-        return directFireGunIndex, nil
-    end
-
-    local total = #arsenalState
-    local fallbackIndex, fallbackEntry
-    for offset = 1, total do
-        local index = ((directFireGunIndex + offset - 1) % total) + 1
-        local entry = arsenalState[index]
-        local tool = entry.Tool
-        local stats = getStatsAttributes(entry.Stats)
-        local ammo = typeof(tool) == "Instance" and tool:GetAttribute("Ammo")
-
-        if not fallbackIndex then
-            fallbackIndex, fallbackEntry = index, entry
-        end
-
-        if stats and not stats.Projectile and (ammo == nil or ammo > 0) then
-            return index, entry
-        end
-    end
-
-    return fallbackIndex or directFireGunIndex, fallbackEntry
 end
 
 local function getClearShotTarget(origin, head, zombie)
@@ -1956,14 +2077,19 @@ autoShootConn = RunService.Heartbeat:Connect(function()
         local hum  = char and char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum or hum.Health <= 0 then autoShootStatus = "no character"; return end
 
-        local ownedGuns = #localBoundGuns > 0 and localBoundGuns or getOwnedGunTools()
-        local filteredGuns = {}
-        for _, gun in ipairs(ownedGuns) do
-            if isOwnedDirectGun(gun) then
-                table.insert(filteredGuns, gun)
+        local equipped = getEquippedTool()
+        local visualMode = isArsenalVisualTool(equipped)
+        local ownedGuns = {}
+        if visualMode then
+            for _, gun in ipairs(localBoundGuns) do
+                if isOwnedDirectGun(gun) then
+                    table.insert(ownedGuns, gun)
+                end
             end
+        elseif isOwnedDirectGun(equipped) then
+            table.insert(ownedGuns, equipped)
         end
-        ownedGuns = filteredGuns
+
         local directGun = nil
         local tool = nil
 
@@ -1971,27 +2097,16 @@ autoShootConn = RunService.Heartbeat:Connect(function()
             local gunIndex = ((directFireGunIndex - 1) % #ownedGuns) + 1
             directGun = ownedGuns[gunIndex]
             tool = directGun
-        else
-            tool = getEquippedGunTool()
-            if not tool and psychicFunctionalArsenal then
-                tool = psychicFunctionalArsenal
-            end
         end
 
-        if not tool then autoShootStatus = "no owned gun/arsenal"; return end
-        watchGunTool(tool)
-        if psychicFunctionalArsenal then watchGunTool(psychicFunctionalArsenal) end
-
-        local Shoot = (directGun and directGun:FindFirstChild("Shoot")) or tool:FindFirstChild("Shoot") or psychicShootRemote
+        if not tool then
+            autoShootStatus = visualMode and "fake arsenal equipped; no bound guns" or "equip fake arsenal or a real gun"
+            return
+        end
+        local Shoot = directGun and directGun:FindFirstChild("Shoot")
         if not Shoot or not Shoot:IsA("RemoteEvent") then autoShootStatus = "missing Shoot remote"; return end
 
-        local slotIndex, slotEntry = nil, nil
-        if not directGun then
-            slotIndex, slotEntry = chooseArsenalSlot()
-            directFireGunIndex = slotIndex or directFireGunIndex
-        end
-
-        local Stats = (directGun and directGun:FindFirstChild("Stats")) or slotEntry and slotEntry.Stats or tool:FindFirstChild("Stats") or (psychicFunctionalArsenal and psychicFunctionalArsenal:FindFirstChild("Stats"))
+        local Stats = directGun and directGun:FindFirstChild("Stats")
         local statAttributes = getStatsAttributes(Stats)
         local fireRate = statAttributes.FireRate or (Stats and Stats:GetAttribute("FireRate")) or 600
         local delay    = math.max(60 / fireRate, 0.08)
@@ -2001,7 +2116,7 @@ autoShootConn = RunService.Heartbeat:Connect(function()
         if not head or not head.Parent then autoShootStatus = "no zombie target"; return end
 
         local zombie = head.Parent
-        local barrelPos = directGun and getToolBarrelPosition(directGun) or getBarrelFromEntry(slotEntry) or getBarrelPosition(tool)
+        local barrelPos = getToolBarrelPosition(directGun)
         local hitPos, hitPart = getClearShotTarget(barrelPos, head, zombie)
         if not hitPos then autoShootStatus = "blocked line of sight"; return end
 
@@ -2009,7 +2124,7 @@ autoShootConn = RunService.Heartbeat:Connect(function()
             hitPos = hitPos + head.AssemblyLinearVelocity * 0.1
         end
 
-        local aimTool = (directGun and directGun:FindFirstChild("ReplicateAim") and directGun) or (tool:FindFirstChild("ReplicateAim") and tool) or psychicFunctionalArsenal or tool
+        local aimTool = directGun
         replicateAim(aimTool, hitPos)
 
         local pellets = statAttributes.Pellets or (Stats and Stats:GetAttribute("Pellets")) or 1
@@ -2025,10 +2140,11 @@ autoShootConn = RunService.Heartbeat:Connect(function()
 
         lastDirectFire = now
         directFireCount = directFireCount + 1
-        local fireIndex = directGun and 1 or directFireGunIndex
+        local fireIndex = 1
         autoShootStatus = string.format(
-            "fired %s index=%s pellets=%s target=%s",
-            directGun and directGun.Name or "arsenal",
+            "fired %s mode=%s index=%s pellets=%s target=%s",
+            directGun.Name,
+            visualMode and "fake arsenal" or "single gun",
             tostring(fireIndex),
             tostring(pellets),
             zombie.Name
@@ -2132,7 +2248,7 @@ Combat:AddButton({
             "autoShoot toggle: %s\n" ..
             "AutoShoot status: %s\n" ..
             "Owned direct guns: %s\n" ..
-            "Remote Arsenal slots: %s\n" ..
+            "Local bound guns: %d\n" ..
             "Direct fire count: %d (gunIndex=%d)\n" ..
             "-- Equipped tool --\n" ..
             "%s",
@@ -2147,7 +2263,7 @@ Combat:AddButton({
             tostring(autoShoot),
             tostring(autoShootStatus),
             ownedGunInfo,
-            tostring(type(arsenalState) == "table" and #arsenalState or "not synced"),
+            localBoundGunCount,
             directFireCount, directFireGunIndex,
             toolInfo
         )
