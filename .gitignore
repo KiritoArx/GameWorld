@@ -12,6 +12,19 @@
 Thumbs.db
 *.tmp
 *.log
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.*
+config.local.*
+
+# Generated builds: keep the public compact hub, ignore other build output.
+dist/*
+!dist/
+!dist/hub.compact.lua
 
 # Adjacent local project folders
 roblox_testing/
