@@ -1,0 +1,14 @@
+# Roblox Studio lock files
+*.rbxlx.lock
+*.rbxl.lock
+
+# Large place exports are kept out of the hub repo by default.
+# Commit them deliberately from a separate game-source repo if needed.
+*.rbxlx
+*.rbxl
+
+# Local/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
