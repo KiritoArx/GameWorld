@@ -25,5 +25,5 @@ This writes `dist\hub.compact.lua`, a compact version that removes blank lines a
 Delta loader:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/KiritoArx/zombieee/main/dist/hub.compact.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/KiritoArx/GameWorld/zombieee/dist/hub.compact.lua"))()
 ```

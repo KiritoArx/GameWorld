@@ -1,1 +1,1 @@
-loadstring(game:HttpGet("https://raw.githubusercontent.com/KiritoArx/zombieee/main/dist/hub.compact.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/KiritoArx/GameWorld/zombieee/dist/hub.compact.lua"))()
