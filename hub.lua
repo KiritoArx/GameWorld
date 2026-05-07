@@ -798,6 +798,78 @@ local function spyLine(lines, text)
     table.insert(lines, text)
 end
 
+local function isPsychicScanName(name)
+    local lower = string.lower(tostring(name or ""))
+    return lower:find("psychic", 1, true)
+        or lower:find("ztool", 1, true)
+        or lower:find("zremote", 1, true)
+        or lower:find("zarsenal", 1, true)
+        or lower:find("zeditor", 1, true)
+        or lower:find("arsenal", 1, true)
+        or lower:find("setweapons", 1, true)
+        or lower:find("remote", 1, true)
+        or lower:find("shoot", 1, true)
+end
+
+local function spyInstanceValue(inst)
+    if inst:IsA("ObjectValue") then
+        return " Value=" .. spyValue(inst.Value)
+    end
+    if inst:IsA("StringValue") or inst:IsA("BoolValue") or inst:IsA("NumberValue") or inst:IsA("IntValue") then
+        return " Value=" .. spyValue(inst.Value)
+    end
+    return ""
+end
+
+local function spyDescribeInst(inst)
+    return inst.ClassName .. " " .. spyFullName(inst) .. spyInstanceValue(inst) .. " attrs={" .. spyAttrs(inst) .. "}"
+end
+
+local function spyDeepTool(lines, tool, label)
+    if not tool then return end
+    spyLine(lines, label .. ": " .. spyDescribeInst(tool))
+
+    local count = 0
+    for _, desc in ipairs(tool:GetDescendants()) do
+        count += 1
+        if count > 80 then
+            spyLine(lines, "  ...descendants truncated...")
+            break
+        end
+        spyLine(lines, "  " .. spyDescribeInst(desc))
+    end
+end
+
+local function spyScanPsychicObjects(lines)
+    local roots = {
+        player,
+        getBackpack(),
+        player.Character,
+        player:FindFirstChild("PlayerGui"),
+        player:FindFirstChild("PlayerScripts"),
+    }
+
+    local seen = {}
+    local count = 0
+    spyLine(lines, "-- Psychic/Z object scan --")
+    for _, root in ipairs(roots) do
+        if root then
+            for _, inst in ipairs(root:GetDescendants()) do
+                if not seen[inst] and (isPsychicScanName(inst.Name) or inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction")) then
+                    seen[inst] = true
+                    count += 1
+                    if count > 120 then
+                        spyLine(lines, "  ...object scan truncated...")
+                        return
+                    end
+                    spyLine(lines, "  " .. spyDescribeInst(inst))
+                end
+            end
+        end
+    end
+    spyLine(lines, "-- scan count: " .. tostring(count) .. " --")
+end
+
 local function buildPsychicSnapshot(label)
     local lines = {}
     spyLine(lines, "=== CRUMB HUB PSYCHIC SNAPSHOT: " .. tostring(label) .. " ===")
@@ -849,6 +921,9 @@ local function buildPsychicSnapshot(label)
     local editorAlias = findOwnedPsychicTool("Psychic Editor")
     spyLine(lines, "Remote Arsenal alias match: " .. (arsenalAlias and spyFullName(arsenalAlias) or "missing"))
     spyLine(lines, "Psychic Editor alias match: " .. (editorAlias and spyFullName(editorAlias) or "missing"))
+    spyDeepTool(lines, arsenalAlias, "Remote Arsenal alias deep")
+    spyDeepTool(lines, editorAlias, "Psychic Editor alias deep")
+    spyScanPsychicObjects(lines)
     spyLine(lines, "Last bind request slots: " .. tostring(psychicLastBindRequest))
     spyLine(lines, "Arsenal state slots: " .. tostring(type(arsenalState) == "table" and #arsenalState or "not synced"))
     return lines
